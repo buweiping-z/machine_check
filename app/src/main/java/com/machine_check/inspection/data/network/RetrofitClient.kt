@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 object RetrofitClient {
 
     // ========== 配置：修改此处切换环境 ==========
-    private const val BASE_URL = "http://192.168.5.6:5039/"
+    private const val BASE_URL = "http://192.168.5.6:8800/"
     // 真机调试示例: "http://192.168.1.100:5039/"
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {

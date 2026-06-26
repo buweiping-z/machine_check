@@ -96,20 +96,22 @@ fun QrCodeScanner(
                 cameraProviderFuture.addListener({
                     val cameraProvider = cameraProviderFuture.get()
 
-                    val preview = Preview.Builder().build().also {
-                        it.surfaceProvider = previewView.surfaceProvider
-                    }
-
+                    val previewBuilder = Preview.Builder()
                     val imageAnalysisBuilder = ImageAnalysis.Builder()
                         .setTargetResolution(Size(1920, 1080))
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
 
-                    // ---- 微距对焦 ----
+                    // ---- 微距对焦（CameraX 1.4.2: Extender 作用于 Builder） ----
                     try {
                         val cameraManager = ctx.getSystemService(
                             android.hardware.camera2.CameraManager::class.java
                         )
-                        val cameraId = cameraManager.cameraIdList.firstOrNull() ?: "0"
+                        // 选择后置摄像头
+                        val cameraId = cameraManager.cameraIdList.first { id ->
+                            val chars = cameraManager.getCameraCharacteristics(id)
+                            chars.get(CameraCharacteristics.LENS_FACING) ==
+                                    CameraCharacteristics.LENS_FACING_BACK
+                        }
                         val characteristics = cameraManager.getCameraCharacteristics(cameraId)
                         val minFocus = characteristics.get(
                             CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE
@@ -118,21 +120,33 @@ fun QrCodeScanner(
                             CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES
                         ) ?: IntArray(0)
 
-                        val extender = Camera2Interop.Extender<ImageAnalysis>(imageAnalysisBuilder)
+                        // Preview 和 ImageAnalysis 各用自己的 Builder 设置对焦
+                        val previewExt = Camera2Interop.Extender(previewBuilder)
+                        val analysisExt = Camera2Interop.Extender(imageAnalysisBuilder)
 
                         if (availableAfModes.contains(CaptureRequest.CONTROL_AF_MODE_MACRO)) {
-                            // 设备支持微距：直接使用
-                            extender.setCaptureRequestOption(
+                            previewExt.setCaptureRequestOption(
+                                CaptureRequest.CONTROL_AF_MODE,
+                                CaptureRequest.CONTROL_AF_MODE_MACRO
+                            )
+                            analysisExt.setCaptureRequestOption(
                                 CaptureRequest.CONTROL_AF_MODE,
                                 CaptureRequest.CONTROL_AF_MODE_MACRO
                             )
                         } else if (minFocus > 0.0f) {
-                            // 降级：AUTO + 最小对焦距离（0.0f = 无穷远，必须用实际值）
-                            extender.setCaptureRequestOption(
+                            previewExt.setCaptureRequestOption(
                                 CaptureRequest.CONTROL_AF_MODE,
                                 CaptureRequest.CONTROL_AF_MODE_AUTO
                             )
-                            extender.setCaptureRequestOption(
+                            previewExt.setCaptureRequestOption(
+                                CaptureRequest.LENS_FOCUS_DISTANCE,
+                                minFocus
+                            )
+                            analysisExt.setCaptureRequestOption(
+                                CaptureRequest.CONTROL_AF_MODE,
+                                CaptureRequest.CONTROL_AF_MODE_AUTO
+                            )
+                            analysisExt.setCaptureRequestOption(
                                 CaptureRequest.LENS_FOCUS_DISTANCE,
                                 minFocus
                             )
@@ -141,6 +155,9 @@ fun QrCodeScanner(
                         // 微距不可用，使用默认对焦
                     }
 
+                    val preview = previewBuilder.build().also {
+                        it.surfaceProvider = previewView.surfaceProvider
+                    }
                     val imageAnalysis = imageAnalysisBuilder.build()
                     imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(ctx), analyzer)
 
