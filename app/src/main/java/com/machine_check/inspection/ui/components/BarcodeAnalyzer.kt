@@ -56,13 +56,17 @@ class BarcodeAnalyzer(
         val mlKitJob = analysisScope.launch {
             try {
                 val inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                mlKitScanner.process(inputImage)
-                    .addOnSuccessListener { barcodes ->
-                        for (barcode in barcodes) {
-                            barcode.rawValue?.takeIf { it.isNotEmpty() }?.let { reportResult(it) }
+                suspendCancellableCoroutine<Unit> { cont ->
+                    mlKitScanner.process(inputImage)
+                        .addOnSuccessListener { barcodes ->
+                            for (barcode in barcodes) {
+                                barcode.rawValue?.takeIf { it.isNotEmpty() }?.let { reportResult(it) }
+                            }
                         }
-                    }
-                    .addOnCompleteListener { /* done */ }
+                        .addOnCompleteListener {
+                            if (cont.isActive) cont.resume(Unit) {}
+                        }
+                }
             } catch (_: Exception) { }
         }
 
@@ -117,7 +121,9 @@ class BarcodeAnalyzer(
             if (rawValue == lastScannedCode && (now - lastScanTime) < dedupCooldownMs) return
             lastScannedCode = rawValue; lastScanTime = now
         }
-        onBarcodeScanned(rawValue)
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            onBarcodeScanned(rawValue)
+        }
     }
 
     fun close() {

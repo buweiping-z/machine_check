@@ -14,25 +14,25 @@ class BinarizationPipelineTest {
     }
 
     @Test
-    fun `otsuBinarize inverts — dark input becomes true`() {
+    fun `otsuBinarize inverts — dark input becomes false`() {
         val pixels = IntArray(100) { 0 }
         val result = BinarizationPipeline.otsuBinarize(pixels, 10, 10)
-        assertTrue("dark pixel should become true after invert", result.get(5, 5))
+        assertFalse("dark pixel should become false after invert", result.get(5, 5))
     }
 
     @Test
-    fun `otsuBinarize inverts — bright input becomes false`() {
+    fun `otsuBinarize inverts — bright input becomes true`() {
         val pixels = IntArray(100) { 255 }
         val result = BinarizationPipeline.otsuBinarize(pixels, 10, 10)
-        assertFalse("bright pixel should become false after invert", result.get(5, 5))
+        assertTrue("bright pixel should become true after invert", result.get(5, 5))
     }
 
     @Test
     fun `otsuBinarize separates black and white regions`() {
         val pixels = IntArray(100) { if (it % 10 < 5) 0 else 255 }
         val result = BinarizationPipeline.otsuBinarize(pixels, 10, 10)
-        assertTrue(result.get(1, 5))   // left (dark) → true after invert
-        assertFalse(result.get(7, 5))  // right (bright) → false after invert
+        assertFalse(result.get(1, 5))  // left (dark) → false after invert
+        assertTrue(result.get(7, 5))   // right (bright) → true after invert
     }
 
     @Test
@@ -51,10 +51,10 @@ class BinarizationPipelineTest {
     }
 
     @Test
-    fun `sauvolaBinarize inverts — dark input becomes true`() {
+    fun `sauvolaBinarize inverts — dark input becomes false`() {
         val pixels = IntArray(1600) { 10 }
         val result = BinarizationPipeline.sauvolaBinarize(pixels, 40, 40)
-        assertTrue(result.get(10, 10))
+        assertFalse(result.get(10, 10))
     }
 
     @Test

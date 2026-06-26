@@ -84,13 +84,14 @@ fun QrCodeScanner(
         return
     }
 
+    val analyzer = remember { BarcodeAnalyzer(onBarcodeScanned) }
+
     Box(modifier = modifier.fillMaxSize()) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 val previewView = PreviewView(ctx)
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                val analyzer = BarcodeAnalyzer(onBarcodeScanned)
 
                 cameraProviderFuture.addListener({
                     val cameraProvider = cameraProviderFuture.get()
@@ -155,6 +156,12 @@ fun QrCodeScanner(
                 previewView
             }
         )
+
+        DisposableEffect(analyzer) {
+            onDispose {
+                analyzer.close()
+            }
+        }
 
         Text(
             text = "将条码置于取景框内",

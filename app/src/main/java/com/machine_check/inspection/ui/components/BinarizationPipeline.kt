@@ -41,11 +41,11 @@ object BinarizationPipeline {
             if (variance > maxVar) { maxVar = variance; bestT = t }
         }
 
-        // 二值化: 暗(<=t)=0, 亮(>t)=1 → 取反: 暗→true, 亮→false
+        // 二值化: 暗(<=t)=0, 亮(>t)=1 → 取反: 亮→true, 暗→false
         val matrix = BitMatrix(width, height)
         for (y in 0 until height) {
             for (x in 0 until width) {
-                if (pixels[y * width + x] <= bestT) matrix.set(x, y)
+                if (pixels[y * width + x] > bestT) matrix.set(x, y)
             }
         }
         return matrix
@@ -93,7 +93,7 @@ object BinarizationPipeline {
                 val threshold = if (stdDev < 1e-10) mean
                                 else mean * (1.0 + k * (stdDev / R - 1.0))
 
-                if (pixels[oy * width + ox] <= threshold) matrix.set(cx, cy)
+                if (pixels[oy * width + ox] > threshold) matrix.set(cx, cy)
             }
         }
         return matrix
