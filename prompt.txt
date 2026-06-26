@@ -1,0 +1,65 @@
+一、 亮点与架构优势（值得保留的核心）
+IdentityBinarizer 的设计堪称神来之笔：这是整个方案最核心的亮点。绕过 ZXing 的 HybridBinarizer 黑盒，确保了前期的“反转”工作不被覆盖，是解决 Light-on-Dark 问题的唯一正解。
+直接提取 Y 平面：避开了 YUV 转 ARGB 的巨大 CPU 开销，在相机高帧率场景下非常必要。
+避坑 Camera2 API 的 0.0f：明确指出 0.0f 代表无穷远而非微距，这说明作者对 Android Camera2 API 有过踩坑经验，非常专业。
+Zero-UI 切换的竞速模式：对工业现场工人极度友好，不需要判断“我现在扫的是普通码还是 PCB 码”。
+二、 潜在性能瓶颈与致命风险
+1. 巨大的 GC 压力（最严重的问题）
+文档中 extractGrayscaleFromYuv 每一帧都 new IntArray(width * height)。
+
+计算：1920×1080 = 2,073,600 个 Int = 约 8MB 内存。
+后果：如果相机帧率是 30fps，每秒将产生 240MB 的短生命周期对象。这会瞬间触发频繁的 GC，导致 UI 卡顿和帧丢失。
+建议：必须在 BarcodeAnalyzer 初始化时预分配一个全局的 IntArray，每帧复用。
+2. 纯 Kotlin 实现 Sauvola 算法的 CPU 灾难
+计算量：即使只取中心 50%（960×540 ≈ 51万像素），15×15 窗口的 Sauvola 每个像素需要计算 225 个点的均值和方差。总运算量约 1.15 亿次加减/乘除运算。
+后果：在普通 Android 工业手机（如 MCU 较弱的设备）上，单次 Sauvola 可能需要 50ms - 150ms。如果 binarizeExecutor 不加限制，会积压大量任务，导致内存溢出（OOM）。
+建议：
+不要用滑动窗口，改用积分图（Integral Image / Summed Area Table）。可以将均值/方差计算从 
+O(W 
+2
+ )
+ 降到 
+O(1)
+，整体从 1.15 亿次降到 50 万次运算。
+或者，Sauvola 不要用 Kotlin 写，直接用 JNI/C++ 或 RenderScript（虽然废弃但可用）实现，这是图像处理在 Android 上的标配。
+3. “中心 50% 裁剪”的工业场景假设风险
+风险：工业流水线工人通常追求效率，不会完美居中对准 5mm 的码。如果只裁剪中心 50%，极大概率导致码被切掉一半，直接导致解码失败。
+建议：不要硬编码裁剪。可以采用降采样策略：先对 1080p 的 Y 平面做 4 倍降采样（变成 480×270），在低分辨率上跑 Sauvola 找到大致阈值/区域，再映射回高分辨率；或者直接在全图用积分图跑 Otsu（Otsu 很快，不会卡），只把 Sauvola 作为极度不均匀光照下的最后兜底。
+4. 竞速的“取消”机制是否真的生效？
+文档提到“First to decode wins; the other is cancelled”。
+风险：如果 Channel 0 (ML Kit) 在 10ms 内赢了，此时 Channel 1 的两个 async 正在疯狂跑 Sauvola。协程的 cancel 需要依赖挂起点才能响应。如果 BinarizationPipeline.kt 里的循环没有写 yield() 或 ensureActive()，底层的 CPU 运算根本停不下来，白白浪费电量。
+建议：在 Sauvola 和 Otsu 的行循环中，必须插入 currentCoroutineContext().ensureActive()。
+三、 架构与代码级优化建议
+1. 动态通道降频（省电与降温优化）
+当用户连续扫描 10 个 PCB 码时，系统其实已经知道现在处于“PCB 扫描模式”。
+
+优化：如果连续 N 帧都是 Channel 1 赢，可以临时挂起 Channel 0 (ML Kit)，或者将 ML Kit 的帧率降为 5fps，将全部 CPU 资源让给 Channel 1。反之亦然。
+2. Y 平面提取的 RowStride 陷阱
+文档中的代码：
+
+kotlin
+
+val gray = yBuffer.get(y * rowStride + x * pixelStride).toInt() and 0xFF
+注意：在部分老旧设备或特定 Camera2 实现上，rowStride 可能大于 width（存在 padding 填充）。上述代码在 pixelStride == 1 且无 padding 时完美运行，但如果有 padding，提取出来的图像会错位（产生斜纹）。
+建议：加一行防御性代码：
+kotlin
+
+val effectiveWidth = if (rowStride == width) width else rowStride // 或者直接用 width 循环，但 buffer index 用 rowStride
+// 实际安全的写法：
+for (y in 0 until height) {
+    for (x in 0 until width) {
+        pixels[y * width + x] = yBuffer.get(y * rowStride + x).toInt() and 0xFF
+    }
+}
+3. ZXing DataMatrixReader 的内存回收
+虽然文档正确指出了每次 new DataMatrixReader()，但 ZXing 内部解码时会分配大量的中间对象（如 BitArray, DetectorResult 等）。在 30fps 的高频调用下，ZXing 本身的 GC 压力也不小。这点需要关注，必要时可以通过监控确认。
+
+四、 文档缺失的要素
+为了让这份设计直接可以用于开发排期，建议补充以下内容：
+
+硬件兜底策略：5mm 的 Data Matrix 在 1080p 下只有约 120px。如果测试机的镜头是广角烂镜头（边缘畸变严重），或者最近对焦距离实际上是 10cm（拍 5mm 码会糊），软件算法再强也没用。需要明确支持的设备硬件底线（如：需具备微距镜头，最近对焦距离 < 5cm）。
+指标基线：
+解码延迟预期是多少？（例如：从对焦到出结果 < 300ms?）
+5mm 码的识别距离范围？（例如：5cm - 10cm）
+CPU 占用率上限？（避免工业手机发热烫手）
+可观测性：扫码失败时，日志需要记录：Channel 0 失败原因、Otsu 阈值、Sauvola 失败原因。这对于后期在工厂现场调优极其重要。

@@ -30,7 +30,6 @@ class BarcodeAnalyzer(
 
     val isActive = AtomicBoolean(true)
 
-    private val mlKitExecutor = Executors.newSingleThreadExecutor()
     private val binarizeExecutor = Executors.newFixedThreadPool(2)
 
     @Volatile private var lastScannedCode: String? = null
@@ -97,7 +96,7 @@ class BarcodeAnalyzer(
             try {
                 withTimeout(2000L) { mlKitJob.join(); zxingJob.join() }
             } catch (_: TimeoutCancellationException) {
-                mlKitJob.cancel(); zxingJob.join()
+                mlKitJob.cancel(); withTimeout(500L) { zxingJob.join() }
             } finally { imageProxy.close() }
         }
     }
@@ -112,6 +111,7 @@ class BarcodeAnalyzer(
     }
 
     private fun reportResult(rawValue: String) {
+        if (!isActive.get()) return
         synchronized(this) {
             val now = System.currentTimeMillis()
             if (rawValue == lastScannedCode && (now - lastScanTime) < dedupCooldownMs) return
@@ -123,7 +123,6 @@ class BarcodeAnalyzer(
     fun close() {
         isActive.set(false)
         analysisScope.cancel()
-        mlKitExecutor.shutdown()
         binarizeExecutor.shutdown()
         mlKitScanner.close()
     }
